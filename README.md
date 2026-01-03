@@ -1,50 +1,120 @@
-Fault-Tolerant Data Processing System
-1. What assumptions did you make?
+# Fault-Tolerant Data Processing System
 
-Incoming events may have inconsistent schemas and data types.
+## 📌 Overview
 
-Clients may resend the same event multiple times.
+This system ingests **unreliable event data** from multiple external clients, normalizes it into a **strict canonical format**, prevents duplicate processing, and exposes **consistent aggregated results**.
 
-There is no guaranteed unique event ID from clients.
+Clients are assumed to be unreliable — they may send malformed data, change field names, resend events, or fail mid-request.  
+The system is designed to remain **correct, consistent, and recoverable** under these conditions.
 
-Data loss is worse than accepting malformed or duplicate requests.
+---
 
-Aggregated data can always be derived from processed canonical events.
+## 🧠 Core Design Principle
 
-The system prioritizes correctness and safety over real-time performance.
+**Flexible input, strict internal contract**
 
-2. How does your system prevent double counting?
+- Incoming data is accepted with minimal assumptions
+- Internal processing enforces a fixed canonical schema
+- This separation ensures reliability without breaking clients
 
-Each normalized event generates a deterministic fingerprint based on its canonical content.
+---
 
-A unique index is enforced on the fingerprint field in MongoDB.
+## 🧩 Handling Unreliable Client Behavior
 
-If a duplicate event is received (due to retries or resends), MongoDB rejects the insert.
+### 1️⃣ Flexible Ingestion
+- The ingestion API accepts **any JSON payload**
+- Unknown or extra fields are allowed
+- Raw events are stored **exactly as received**
+- No schema validation at ingestion time
 
-Aggregates are updated only after a canonical event is successfully inserted.
+This prevents client-side changes from breaking the system.
 
-As a result, duplicate events never affect aggregation results.
+---
 
-3. What happens if the database fails mid-request?
+### 2️⃣ Normalization Layer
+- Raw events are converted into a **fixed canonical schema**
+- Safe type conversions are applied (e.g. string → number)
+- Required fields must be **unambiguously derivable**
+- Events that cannot be normalized reliably are rejected
 
-Raw events are stored first as a write-ahead log.
+This avoids silent data corruption during aggregation.
 
-If normalization or canonical insertion fails, the raw event remains persisted.
+---
 
-When the client retries the request, the same fingerprint is generated.
+### 3️⃣ Idempotency & Duplicate Prevention
+- Each normalized event generates a **deterministic fingerprint**
+- A unique index on the fingerprint ensures idempotency
+- Duplicate events caused by retries are automatically ignored
 
-Duplicate canonical inserts are safely ignored due to idempotency.
+Guarantees:
+- No double counting  
+- Safe retries  
+- Consistent aggregates  
 
-This ensures no data loss and no double processing.
+---
 
-4. What would break first at scale?
+### 4️⃣ Failure Safety
+- Raw events are written first (write-ahead logging)
+- If processing fails mid-way, raw data remains persisted
+- Retries generate the same fingerprint and are safely deduplicated
 
-Fingerprint collision risk would increase with extremely high event volumes.
+Ensures:
+- No data loss  
+- No inconsistent state  
+- Safe recovery from partial failures  
 
-Aggregation updates could become a write bottleneck.
+---
 
-Raw event storage would grow indefinitely without archival or cleanup.
+## 📐 Canonical Internal Schema
 
-Normalization rules would require versioning as schemas evolve.
+All events are normalized into a strict internal format:
 
-Background workers would be needed for reprocessing and aggregation recomputation.
+```json
+{
+  "clientId": "client_A",
+  "metric": "value",
+  "amount": 1200,
+  "timestamp": "2024-01-01T00:00:00Z"
+}
+```
+
+This schema is required to:
+
+- Perform reliable aggregation  
+- Keep business logic deterministic  
+- Prevent ambiguous interpretation of data  
+
+---
+
+## ❌ Why Arbitrary Field Names Are Not Allowed
+
+Allowing uncontrolled field variations (e.g. `amount`, `amounts`, `price`, `cost`) would make aggregation unreliable and ambiguous.
+
+Instead, schema evolution is handled through:
+- Explicit normalization rules  
+- Client-specific mappings  
+- Schema versioning (future enhancement)  
+
+Rejecting unclear data is safer than guessing intent.
+
+---
+
+## ✅ Summary
+
+- Incoming client data is flexible  
+- Raw events are always preserved  
+- Internal processing uses a strict schema  
+- Idempotency prevents duplicate processing  
+- Write-ahead logging ensures fault tolerance  
+- Aggregated results remain correct and consistent  
+
+---
+
+## 🙋‍♂️ Author
+
+**Vishal Sharma**  
+Backend / Full Stack Developer  
+
+🔗 LinkedIn: https://www.linkedin.com/in/vishalsharma2003  
+
+⭐ If this system design helped you, consider giving it a star!
